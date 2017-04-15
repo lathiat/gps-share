@@ -30,13 +30,20 @@ use std::io::Write;
 pub struct Server<'a> {
     gps: gps::GPS,
     listener: TcpListener,
-    avahi: avahi::Avahi<'a>,
+    avahi: Option<avahi::Avahi<'a>>,
 }
 
 impl<'a> Server<'a> {
     pub fn new(gps: gps::GPS) -> io::Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", 0))?;
-        let avahi = avahi::Avahi::new();
+        let avahi = match avahi::Avahi::new() {
+            Ok(avahi) => Some(avahi),
+            Err(e) => {
+                println!("Failed to connect to Avahi: {}", e);
+
+                None
+            }
+        };
 
         Ok(Server { gps:      gps,
                     listener: listener,
@@ -48,9 +55,11 @@ impl<'a> Server<'a> {
         let port = addr.port();
         println!("TCP server bound to port {} on all interfaces", port);
 
-        if let Err(e) = self.avahi.publish(port) {
-            println!("Failed to publish service on Avahi: {}", e);
-        };
+        if let Some(ref avahi) = self.avahi {
+            if let Err(e) = avahi.publish(port) {
+                println!("Failed to publish service on Avahi: {}", e);
+            };
+        }
 
         loop {
             match self.listener.accept() {
