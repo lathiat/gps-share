@@ -23,32 +23,85 @@
 
 use dbus;
 
-dbus_interface!("org.freedesktop.Avahi.Server", interface Server {
-    fn entry_group_new() -> dbus::Path;
-});
-
-dbus_interface!("org.freedesktop.Avahi.EntryGroup", interface EntryGroup {
-    fn add_service(ifindex: i32,
-                   protocol: i32,
-                   flags: u32,
-                   name: &str,
-                   service_type: &str,
-                   domain: &str,
-                   host: &str,
-                   port: u16,
-                   text: &str);
-    fn commit();
-});
+pub struct Server<'a> {
+    bus_name: String,
+    path: dbus::Path<'a>,
+    connection: dbus::Connection,
+}
+impl <'a> Server<'a> {
+    pub fn new<P>(dbus_name: &str, path: P, dbus_connection: dbus::Connection)
+     -> Self where P: Into<dbus::Path<'a>> {
+        Server{bus_name: dbus_name.to_string(),
+               path: path.into(),
+               connection: dbus_connection,
+              }
+    }
+    pub fn entry_group_new(&self) -> Result<dbus::Path, dbus::Error> {
+        let message =
+            dbus::Message::new_method_call(&self.bus_name,
+                                           self.path.clone(),
+                                           "org.freedesktop.Avahi.Server",
+                                           ::dbus_macros::to_camel("entry_group_new")).unwrap();
+        let response = try!(self.connection.send_with_reply_and_block(message, 2000));
+        response.get1().ok_or(dbus::Error::from(dbus::tree::MethodErr::no_arg()))
+    }
+}
+pub struct EntryGroup<'a> {
+    bus_name: String,
+    path: dbus::Path<'a>,
+    connection: dbus::Connection,
+}
+impl <'a> EntryGroup<'a> {
+    pub fn new<P>(dbus_name: &str, path: P, dbus_connection: dbus::Connection)
+     -> Self where P: Into<dbus::Path<'a>> {
+        EntryGroup{bus_name: dbus_name.to_string(),
+                   path: path.into(),
+                   connection: dbus_connection,
+                    }
+    }
+    pub fn add_service(&self, ifindex: i32, protocol: i32, flags: u32,
+                       name: &str, service_type: &str, domain: &str,
+                       host: &str, port: u16, text: &str)
+     -> Result<(), dbus::Error> {
+        let message =
+            dbus::Message::new_method_call(&self.bus_name,
+                                           self.path.clone(),
+                                           "org.freedesktop.Avahi.EntryGroup",
+                                           ::dbus_macros::to_camel("add_service")).unwrap();
+        let message = message.append1(ifindex);
+        let message = message.append1(protocol);
+        let message = message.append1(flags);
+        let message = message.append1(name);
+        let message = message.append1(service_type);
+        let message = message.append1(domain);
+        let message = message.append1(host);
+        let message = message.append1(port);
+        let message = message.append1(text);
+        self.connection.send(message).ok();
+        Ok(())
+    }
+    pub fn commit(&self) -> Result<(), dbus::Error> {
+        let message =
+            dbus::Message::new_method_call(&self.bus_name,
+                                           self.path.clone(),
+                                           "org.freedesktop.Avahi.EntryGroup",
+                                           ::dbus_macros::to_camel("commit")).unwrap();
+        self.connection.send(message).ok();
+        Ok(())
+    }
+}
 
 pub struct Avahi<'a> {
     server: Server<'a>,
+    connection: dbus::Connection,
 }
 
 impl<'a> Avahi<'a> {
     pub fn new() -> Self {
-        let server: Server = Server::new("org.freedesktop.Avahi", "/", dbus::BusType::System);
+        let connection: dbus::Connection = dbus::Connection::get_private(dbus::BusType::System).unwrap();
+        let server: Server = Server::new("org.freedesktop.Avahi", "/", connection);
    
-        Avahi { server: server }
+        Avahi { server: server, connection: connection }
     }
 
     pub fn publish(&self, port: u16) -> Result<(),dbus::Error> {
@@ -56,7 +109,7 @@ impl<'a> Avahi<'a> {
         let group_path = self.server.entry_group_new()?;
         println!("group: {}", group_path);
 
-        let group = EntryGroup::new("org.freedesktop.Avahi", group_path, dbus::BusType::System);
+        let group = EntryGroup::new("org.freedesktop.Avahi", group_path, self.connection);
         group.add_service(-1, -1, 0, "gps-share", "_nmea-0183._tcp", "", "", port, "")?;
         group.commit()?;
 
